@@ -5,6 +5,16 @@ Provides middleware for transaction and error reporting  to opbeat from your
 Pyramid applications.
 
 
+### Installation
+
+Installation can be done with easy_install, pip, or whichever package
+management tool you prefer:
+
+```
+pip install opbeat_pyramid
+```
+
+
 ### Usage
 
 Using the module should be simple. You will need to call
