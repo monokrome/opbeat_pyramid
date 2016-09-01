@@ -1,0 +1,8 @@
+# Build artifacts
+*.egg-info
+*.pyc
+
+
+# Non-git hidden files
+/.*
+!/.git*
