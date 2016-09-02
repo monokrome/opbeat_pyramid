@@ -20,7 +20,7 @@ pip install opbeat_pyramid
 Using the module should be simple. You will need to call
 `config.include('opbeat_pyramid')` on the configurator for your Pyramid
 project. With the standard Pyramid boilerplates, this will be done in the
-`main` function within **__init__.py**.
+`main` function within **\__init__.py**.
 
 
 #### Options
