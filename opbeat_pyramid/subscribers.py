@@ -91,7 +91,7 @@ def handle_exception(client, request):
 
     data = {
         'http': {
-            'url': request.host + ':' + request.host_port,
+            'url': request.scheme+'://'+request.host+':'+request.host_port,
             'method': request.method,
             'query_string': request.query_string,
         }
@@ -129,7 +129,7 @@ def on_request_finished(request):
 def on_request_begin(event):
     request = event.request
 
-    if not is_opbeat_enabled(event.request):
+    if not is_opbeat_enabled(request):
         return
 
     client = opbeat_client_factory(request)
