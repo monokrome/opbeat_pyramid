@@ -2,6 +2,7 @@
 *.egg-info
 *.pyc
 /dist/*
+/build/*
 
 
 # Non-git hidden files

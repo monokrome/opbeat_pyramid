@@ -1,4 +1,4 @@
-__VERSION__ = '1.0.3'
+__VERSION__ = '1.0.4'
 
 
 def includeme(config, module_name='opbeat_pyramid'):
