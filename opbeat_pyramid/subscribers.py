@@ -89,9 +89,13 @@ def handle_exception(client, request):
         'status_code': status_code,
     })
 
+    scheme = request.scheme + '://'
+    host = request.host + ':' + request.host_port
+    path = request.path
+
     data = {
         'http': {
-            'url': request.scheme+'://'+request.host+':'+request.host_port,
+            'url': scheme + host + path,
             'method': request.method,
             'query_string': request.query_string,
         }
