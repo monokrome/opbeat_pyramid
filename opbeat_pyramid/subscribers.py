@@ -67,7 +67,7 @@ def get_safe_settings(settings):
 
 
 def handle_exception(request, exc_info=None):
-    # save the traceback as it may get lost when we get the message.
+    # Save the traceback as it may get lost when we get the message.
     # handle_exception is not in the traceback, so calling sys.exc_info
     # does NOT create a circular reference
     if exc_info is None:
