@@ -74,7 +74,7 @@ def handle_exception(request, exc_info=None):
         exc_info = sys.exc_info()
 
     if exc_info[1] and isinstance(exc_info[1], httpexceptions.HTTPException):
-        # Ignore any of exceptions like 404 and 302s
+        # Ignore any exceptions like 404 and 302s
         return
 
     try:
