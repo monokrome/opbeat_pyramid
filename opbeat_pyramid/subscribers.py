@@ -134,6 +134,8 @@ def on_request_finished(request):
     else:
         route_name = 'Unknown Route'
 
+    status_code = None
+
     if request.exc_info:
         if request.exc_info[1] and \
            isinstance(request.exc_info[1], httpexceptions.HTTPException):
