@@ -101,6 +101,7 @@ def handle_exception(request, exc_info=None):
         client = opbeat_client_factory(request)
         client.capture_exception(exc_info, data=data, extra=details)
     except:
+        # Exceptions in exception logging should be ignored
         pass
 
     return
