@@ -135,8 +135,8 @@ def on_request_finished(request):
 
     if request.exc_info:
         if request.exc_info[1] and \
-           isinstance(exc_info[1], httpexceptions.HTTPException):
-            status_code = exc_info[1].code
+           isinstance(request.exc_info[1], httpexceptions.HTTPException):
+            status_code = request.exc_info[1].code
     else:
         status_code = request.response.status_code
 
