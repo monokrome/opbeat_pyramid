@@ -1,3 +1,5 @@
+import sys
+#
 import opbeat
 
 from opbeat.instrumentation import control
@@ -64,21 +66,16 @@ def get_safe_settings(settings):
     return result
 
 
-def handle_exception(client, request):
-    status_code = None
+def handle_exception(request, exc_info=None):
+    # save the traceback as it may get lost when we get the message.
+    # handle_exception is not in the traceback, so calling sys.exc_info
+    # does NOT create a circular reference
+    if exc_info is None:
+        exc_info = sys.exc_info()
 
-    if not request.exc_info:
-        return status_code
-
-    ex_value = request.exc_info[1]
-    is_redirect = isinstance(ex_value, httpexceptions.HTTPRedirection)
-    is_redirect_exception = ex_value and is_redirect
-
-    if is_redirect_exception:
-        return ex_value.code
-
-    if isinstance(ex_value, httpexceptions.HTTPException):
-        status_code = ex_value.code
+    if exc_info[1] and isinstance(exc_info[1], httpexceptions.HTTPException):
+        # Ignore any of exceptions like 404 and 302s
+        return
 
     details = get_safe_settings(request.registry.settings)
 
@@ -86,7 +83,6 @@ def handle_exception(client, request):
         'url': request.url,
         'user_agent': request.user_agent,
         'client_ip_address': request.client_addr,
-        'status_code': status_code,
     })
 
     scheme = request.scheme + '://'
@@ -101,11 +97,27 @@ def handle_exception(client, request):
         }
     }
 
+    print '---------------------'
+    print exc_info
+
     client = opbeat_client_factory(request)
-    client.capture_exception(request.exc_info, data=data, extra=details)
+    client.capture_exception(exc_info, data=data, extra=details)
 
-    return status_code
+    return
 
+def opbeat_tween_factory(handler, registry):
+    def opbeat_tween(request):
+        try:
+            response = handler(request)
+            exc_info = getattr(request, 'exc_info', None)
+            if exc_info is not None:
+                handle_exception(request, exc_info)
+            return response
+
+        except:
+            handle_exception(request)
+            raise
+    return opbeat_tween
 
 def on_request_finished(request):
     if not is_opbeat_enabled(request):
@@ -122,7 +134,9 @@ def on_request_finished(request):
         route_name = 'Unknown Route'
 
     if request.exc_info:
-        status_code = handle_exception(client, request)
+        if request.exc_info[1] and \
+           isinstance(exc_info[1], httpexceptions.HTTPException):
+            status_code = exc_info[1].code
     else:
         status_code = request.response.status_code
 
