@@ -1,5 +1,5 @@
 import sys
-#
+
 import opbeat
 
 from opbeat.instrumentation import control
@@ -76,6 +76,8 @@ def handle_exception(request, exc_info=None):
     if exc_info[1] and isinstance(exc_info[1], httpexceptions.HTTPException):
         # Ignore any exceptions like 404 and 302s
         return
+
+    print exc_info
 
     try:
         details = get_safe_settings(request.registry.settings)
