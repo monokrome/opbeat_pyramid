@@ -77,31 +77,33 @@ def handle_exception(request, exc_info=None):
         # Ignore any of exceptions like 404 and 302s
         return
 
-    details = get_safe_settings(request.registry.settings)
+    try:
+        details = get_safe_settings(request.registry.settings)
 
-    details.update({
-        'url': request.url,
-        'user_agent': request.user_agent,
-        'client_ip_address': request.client_addr,
-    })
+        details.update({
+            'url': request.url,
+            'user_agent': request.user_agent,
+            'client_ip_address': request.client_addr,
+        })
 
-    scheme = request.scheme + '://'
-    host = request.host + ':' + request.host_port
-    path = request.path
+        scheme = request.scheme + '://'
+        host = request.host + ':' + request.host_port
+        path = request.path
 
-    data = {
-        'http': {
-            'url': scheme + host + path,
-            'method': request.method,
-            'query_string': request.query_string,
+        data = {
+            'http': {
+                'url': scheme + host + path,
+                'method': request.method,
+                'query_string': request.query_string,
+            }
         }
-    }
 
-    print '---------------------'
-    print exc_info
-
-    client = opbeat_client_factory(request)
-    client.capture_exception(exc_info, data=data, extra=details)
+        client = opbeat_client_factory(request)
+        print '---------'
+        print exc_info
+        client.capture_exception(exc_info, data=data, extra=details)
+    except:
+        pass
 
     return
 
