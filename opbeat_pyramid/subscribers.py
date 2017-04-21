@@ -77,8 +77,6 @@ def handle_exception(request, exc_info=None):
         # Ignore any exceptions like 404 and 302s
         return
 
-    print exc_info
-
     try:
         details = get_safe_settings(request.registry.settings)
 
