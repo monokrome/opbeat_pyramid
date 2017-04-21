@@ -99,8 +99,6 @@ def handle_exception(request, exc_info=None):
         }
 
         client = opbeat_client_factory(request)
-        print '---------'
-        print exc_info
         client.capture_exception(exc_info, data=data, extra=details)
     except:
         pass
