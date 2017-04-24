@@ -1,3 +1,5 @@
+import sys
+
 import opbeat
 
 from opbeat.instrumentation import control
@@ -64,48 +66,59 @@ def get_safe_settings(settings):
     return result
 
 
-def handle_exception(client, request):
-    status_code = None
+def handle_exception(request, exc_info=None):
+    # Save the traceback as it may get lost when we get the message.
+    # handle_exception is not in the traceback, so calling sys.exc_info
+    # does NOT create a circular reference
+    if exc_info is None:
+        exc_info = sys.exc_info()
 
-    if not request.exc_info:
-        return status_code
+    if exc_info[1] and isinstance(exc_info[1], httpexceptions.HTTPException):
+        # Ignore any exceptions like 404 and 302s
+        return
 
-    ex_value = request.exc_info[1]
-    is_redirect = isinstance(ex_value, httpexceptions.HTTPRedirection)
-    is_redirect_exception = ex_value and is_redirect
+    try:
+        details = get_safe_settings(request.registry.settings)
 
-    if is_redirect_exception:
-        return ex_value.code
+        details.update({
+            'url': request.url,
+            'user_agent': request.user_agent,
+            'client_ip_address': request.client_addr,
+        })
 
-    if isinstance(ex_value, httpexceptions.HTTPException):
-        status_code = ex_value.code
+        scheme = request.scheme + '://'
+        host = request.host + ':' + request.host_port
+        path = request.path
 
-    details = get_safe_settings(request.registry.settings)
-
-    details.update({
-        'url': request.url,
-        'user_agent': request.user_agent,
-        'client_ip_address': request.client_addr,
-        'status_code': status_code,
-    })
-
-    scheme = request.scheme + '://'
-    host = request.host + ':' + request.host_port
-    path = request.path
-
-    data = {
-        'http': {
-            'url': scheme + host + path,
-            'method': request.method,
-            'query_string': request.query_string,
+        data = {
+            'http': {
+                'url': scheme + host + path,
+                'method': request.method,
+                'query_string': request.query_string,
+            }
         }
-    }
 
-    client = opbeat_client_factory(request)
-    client.capture_exception(request.exc_info, data=data, extra=details)
+        client = opbeat_client_factory(request)
+        client.capture_exception(exc_info, data=data, extra=details)
+    except:
+        # Exceptions in exception logging should be ignored
+        pass
 
-    return status_code
+    return
 
+def opbeat_tween_factory(handler, registry):
+    def opbeat_tween(request):
+        try:
+            response = handler(request)
+            exc_info = getattr(request, 'exc_info', None)
+            if exc_info is not None:
+                handle_exception(request, exc_info)
+            return response
+
+        except:
+            handle_exception(request)
+            raise
+    return opbeat_tween
 
 def on_request_finished(request):
     if not is_opbeat_enabled(request):
@@ -121,8 +134,12 @@ def on_request_finished(request):
     else:
         route_name = 'Unknown Route'
 
+    status_code = None
+
     if request.exc_info:
-        status_code = handle_exception(client, request)
+        if request.exc_info[1] and \
+           isinstance(request.exc_info[1], httpexceptions.HTTPException):
+            status_code = request.exc_info[1].code
     else:
         status_code = request.response.status_code
 
