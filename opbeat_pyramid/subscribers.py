@@ -120,6 +120,16 @@ def opbeat_tween_factory(handler, registry):
             raise
     return opbeat_tween
 
+
+def is_http_exception(exc_info):
+    if not exc_info:
+        return False
+
+    if not exc_info[1]:
+        return False
+
+    return isinstance(request.exc_info[1], httpexceptions.HTTPException)
+
 def on_request_finished(request):
     if not is_opbeat_enabled(request):
         return
@@ -134,12 +144,8 @@ def on_request_finished(request):
     else:
         route_name = 'Unknown Route'
 
-    status_code = None
-
-    if request.exc_info:
-        if request.exc_info[1] and \
-           isinstance(request.exc_info[1], httpexceptions.HTTPException):
-            status_code = request.exc_info[1].code
+    if is_http_exception(request.exc_info):
+        status_code = request.exc_info[1].code
     else:
         status_code = request.response.status_code
 
