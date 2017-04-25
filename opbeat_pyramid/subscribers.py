@@ -1,6 +1,6 @@
-import sys
-
+import functools
 import opbeat
+import sys
 
 from opbeat.instrumentation import control
 
@@ -9,6 +9,10 @@ from pyramid import httpexceptions
 
 
 CLIENTS = {}
+
+DEFAULT_UNKNOWN_ROUTE_TEXT = 'Unknown Route'
+
+IGNORE_HTTP_EXCEPTIONS_SETTING = 'opbeat.ignore_http_exceptions'
 DEFAULT_UNSAFE_SETTINGS_TERMS = 'token,password,passphrase,secret,private,key'
 
 
@@ -18,17 +22,18 @@ control.instrument()
 def opbeat_client_factory(request):
     app_id = request.registry.settings['opbeat.app_id']
 
-    if app_id not in CLIENTS:
-        secret_token = request.registry.settings['opbeat.secret_token']
-        organization_id = request.registry.settings['opbeat.organization_id']
+    if app_id in CLIENTS:
+        return CLIENTS[app_id]
 
-        CLIENTS[app_id] = opbeat.Client(
-            secret_token=secret_token,
-            organization_id=organization_id,
-            app_id=app_id,
-        )
+    secret_token = request.registry.settings['opbeat.secret_token']
+    organization_id = request.registry.settings['opbeat.organization_id']
 
-    return CLIENTS[app_id]
+    CLIENTS[app_id] = opbeat.Client(
+        secret_token=secret_token,
+        organization_id=organization_id,
+        app_id=app_id,
+    )
+
 
 
 def is_opbeat_enabled(request):
@@ -66,59 +71,82 @@ def get_safe_settings(settings):
     return result
 
 
-def handle_exception(request, exc_info=None):
-    # Save the traceback as it may get lost when we get the message.
-    # handle_exception is not in the traceback, so calling sys.exc_info
-    # does NOT create a circular reference
-    if exc_info is None:
-        exc_info = sys.exc_info()
+def should_ignore_exception(request, exc_info):
+    if not is_http_exception(exc_info):
+        return False
 
-    if exc_info[1] and isinstance(exc_info[1], httpexceptions.HTTPException):
-        # Ignore any exceptions like 404 and 302s
-        return
+    return request.registry.settings.get(IGNORE_HTTP_EXCEPTIONS_SETTING, False)
+
+
+def capture_exception(exc_info, extra):
+    client = opbeat_client_factory(request)
+
+    data = {
+        'http': {
+            'url': get_full_request_url(request),
+            'method': request.method,
+            'query_string': request.query_string,
+        }
+    }
 
     try:
-        details = get_safe_settings(request.registry.settings)
+        return client.capture_exception(exc_info, data=data, extra=details)
 
-        details.update({
-            'url': request.url,
-            'user_agent': request.user_agent,
-            'client_ip_address': request.client_addr,
-        })
-
-        scheme = request.scheme + '://'
-        host = request.host + ':' + request.host_port
-        path = request.path
-
-        data = {
-            'http': {
-                'url': scheme + host + path,
-                'method': request.method,
-                'query_string': request.query_string,
-            }
-        }
-
-        client = opbeat_client_factory(request)
-        client.capture_exception(exc_info, data=data, extra=details)
-    except:
-        # Exceptions in exception logging should be ignored
+    except Exception as e:
+        # NOTE: This should not be allowed until we know which exception we are
+        # looking for here.
         pass
 
-    return
+
+def get_full_request_url(request):
+    scheme = request.scheme + '://'
+    host = request.host + ':' + request.host_port
+    path = request.path
+    return scheme + host + path
+
+
+def handle_exception(request, exc_info):
+    if should_ignore_exception(request, exc_info):
+        return
+
+    details = get_safe_settings(request.registry.settings)
+
+    details.update({
+        'client_ip_address': request.client_addr,
+        'logging_successful': 'true',
+        'url': request.url,
+        'user_agent': request.user_agent,
+    })
+
+    return capture_exception(exc_info, details)
+
+
+def get_exception_for_request(request):
+    exc_info = getattr(request, 'exc_info', None)
+
+    if exc_info is not None:
+        return exc_info
+
+    return sys.exc_info()
+
+
+def opbeat_tween(handler, registry, request):
+    try:
+        response = handler(request)
+    except Exception as exc:
+        handle_exception(request, exc)
+        raise
+
+    exc_info = get_exception_for_request(request)
+
+    if exc_info is not None:
+        handle_exception(request, exc_info)
+
+    return response
+
 
 def opbeat_tween_factory(handler, registry):
-    def opbeat_tween(request):
-        try:
-            response = handler(request)
-            exc_info = getattr(request, 'exc_info', None)
-            if exc_info is not None:
-                handle_exception(request, exc_info)
-            return response
-
-        except:
-            handle_exception(request)
-            raise
-    return opbeat_tween
+    return functools.partial(opbeat_tween, handler, registry)
 
 
 def is_http_exception(exc_info):
@@ -130,26 +158,33 @@ def is_http_exception(exc_info):
 
     return isinstance(request.exc_info[1], httpexceptions.HTTPException)
 
+
+def get_status_code(request):
+    if is_http_exception(request.exc_info):
+        return request.exc_info[1].code
+
+    return request.response.status_code
+
+def get_route_name(request):
+    if request.view_name:
+        return request.view_name
+
+    elif request.matched_route and request.matched_route.name:
+        module_name = get_request_module_name(request)
+        return module_name + '.' + request.matched_route.name
+
+    return request.registry.settings.get(
+        'opbeat.unknown_route_name',
+        DEFAULT_UNKNOWN_ROUTE_TEXT,
+    )
+
+
 def on_request_finished(request):
     if not is_opbeat_enabled(request):
         return
 
     client = opbeat_client_factory(request)
-    module_name = get_request_module_name(request)
-
-    if request.matched_route and request.matched_route.name:
-        route_name = module_name + '.' + request.matched_route.name
-    elif request.view_name:
-        route_name = request.view_name
-    else:
-        route_name = 'Unknown Route'
-
-    if is_http_exception(request.exc_info):
-        status_code = request.exc_info[1].code
-    else:
-        status_code = request.response.status_code
-
-    client.end_transaction(route_name, status_code)
+    client.end_transaction(get_route_name(request), get_status_code(request))
 
 
 @events.subscriber(events.NewRequest)
