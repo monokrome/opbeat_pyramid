@@ -8,9 +8,8 @@ from pyramid import events
 from pyramid import httpexceptions
 
 
-CLIENTS = {}
-
 DEFAULT_UNKNOWN_ROUTE_TEXT = 'Unknown Route'
+TRUTHY_VALUES = {True, 'true', 'yes', 'on'}
 
 IGNORE_HTTP_EXCEPTIONS_SETTING = 'opbeat.ignore_http_exceptions'
 DEFAULT_UNSAFE_SETTINGS_TERMS = 'token,password,passphrase,secret,private,key'
@@ -19,27 +18,50 @@ DEFAULT_UNSAFE_SETTINGS_TERMS = 'token,password,passphrase,secret,private,key'
 control.instrument()
 
 
-def opbeat_client_factory(request):
-    app_id = request.registry.settings['opbeat.app_id']
+def get_opbeat_client_cache(request):
+    if not hasattr(request.registry, '_opbeat_clients'):
+        request.registry._opbeat_clients = {}
 
-    if app_id in CLIENTS:
-        return CLIENTS[app_id]
+    return request.registry._opbeat_clients
 
+
+def create_opbeat_client(request, app_id):
     secret_token = request.registry.settings['opbeat.secret_token']
     organization_id = request.registry.settings['opbeat.organization_id']
 
-    CLIENTS[app_id] = opbeat.Client(
+    return opbeat.Client(
         secret_token=secret_token,
         organization_id=organization_id,
         app_id=app_id,
     )
 
 
+def opbeat_client_factory(request):
+    clients = get_opbeat_client_cache(request)
+
+    # TODO: Handle case where this is unset / empty
+    app_id = request.registry.settings['opbeat.app_id']
+    client = clients.get(app_id)
+
+    if client:
+        return client
+
+    clients[app_id] = create_opbeat_client(request, app_id)
+
+    return clients[app_id]
+
+
+def setting_is_enabled(request, setting_name):
+    setting = request.registry.settings.get(setting_name, False)
+
+    if setting is True:
+        return True
+
+    return setting.lower() in TRUTHY_VALUES
+
 
 def is_opbeat_enabled(request):
-    setting = request.registry.settings.get('opbeat.enabled', False)
-    return setting is True or setting == 'true'
-
+    'opbeat.enabled'
 
 def get_request_module_name(request):
     return request.registry.settings.get(
@@ -99,6 +121,8 @@ def capture_exception(exc_info, extra):
 
 
 def get_full_request_url(request):
+    """ Get the full URL for a given request. """
+
     scheme = request.scheme + '://'
     host = request.host + ':' + request.host_port
     path = request.path
@@ -150,10 +174,7 @@ def opbeat_tween_factory(handler, registry):
 
 
 def is_http_exception(exc_info):
-    if not exc_info:
-        return False
-
-    if not exc_info[1]:
+    if not exc_info and not exc_info[1]:
         return False
 
     return isinstance(request.exc_info[1], httpexceptions.HTTPException)
@@ -164,6 +185,7 @@ def get_status_code(request):
         return request.exc_info[1].code
 
     return request.response.status_code
+
 
 def get_route_name(request):
     if request.view_name:
@@ -191,9 +213,7 @@ def on_request_finished(request):
 def on_request_begin(event):
     request = event.request
 
-    if not is_opbeat_enabled(request):
-        return
-
-    client = opbeat_client_factory(request)
-    client.begin_transaction(get_request_module_name(request))
-    request.add_finished_callback(on_request_finished)
+    if is_opbeat_enabled(request):
+        client = opbeat_client_factory(request)
+        client.begin_transaction(get_request_module_name(request))
+        request.add_finished_callback(on_request_finished)
