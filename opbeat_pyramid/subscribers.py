@@ -97,14 +97,14 @@ def get_safe_settings(settings):
     return result
 
 
-def should_ignore_exception(request, exc_info):
-    if not is_http_exception(exc_info):
+def should_ignore_exception(request, exc):
+    if is_http_exception(exc):
         return False
 
     return request.registry.settings.get(IGNORE_HTTP_EXCEPTIONS_SETTING, False)
 
 
-def capture_exception(exc_info, extra):
+def capture_exception(request, exc_info, extra):
     client = opbeat_client_factory(request)
 
     data = {
@@ -116,7 +116,7 @@ def capture_exception(exc_info, extra):
     }
 
     try:
-        return client.capture_exception(exc_info, data=data, extra=details)
+        return client.capture_exception(exc_info, data=data, extra=extra)
 
     except Exception as e:
         # NOTE: This should not be allowed until we know which exception we are
@@ -146,7 +146,8 @@ def handle_exception(request, exc_info):
         'user_agent': request.user_agent,
     })
 
-    return capture_exception(exc_info, details)
+    print('Captured: {}'.format(str(exc_info)))
+    # return capture_exception(request, exc_info, details)
 
 
 def get_exception_for_request(request):
@@ -185,10 +186,13 @@ def is_http_exception(exc_info):
     if not exc_info and not exc_info[1]:
         return False
 
-    return isinstance(request.exc_info[1], httpexceptions.HTTPException)
+    return isinstance(exc_info, httpexceptions.HTTPException)
 
 
 def get_status_code(request):
+    # Handles an edge-case where `request.response` isn't the actual response.
+    # This can occur whenever a view needs to create a new response instead of
+    # using the one attached to the request.
     if is_http_exception(request.exc_info):
         return request.exc_info[1].code
 
@@ -221,7 +225,9 @@ def on_request_finished(request):
 def on_request_begin(event):
     request = event.request
 
-    if is_opbeat_enabled(request):
-        client = opbeat_client_factory(request)
-        client.begin_transaction(get_request_module_name(request))
-        request.add_finished_callback(on_request_finished)
+    if not is_opbeat_enabled(request):
+        return
+
+    client = opbeat_client_factory(request)
+    client.begin_transaction(get_request_module_name(request))
+    request.add_finished_callback(on_request_finished)
