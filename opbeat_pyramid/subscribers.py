@@ -2,10 +2,14 @@ import functools
 import opbeat
 import sys
 
+import pyramid.tweens
+
 from opbeat.instrumentation import control
 
 from pyramid import events
 from pyramid import httpexceptions
+
+from opbeat_pyramid import tweens
 
 
 DEFAULT_UNKNOWN_ROUTE_TEXT = 'Unknown Route'
@@ -169,6 +173,10 @@ def opbeat_tween(handler, registry, request):
     return response
 
 
+@tweens.tween_config(over=[
+    pyramid.tweens.EXCVIEW,
+    'pyramid_tm.tm_tween_factory',
+])
 def opbeat_tween_factory(handler, registry):
     return functools.partial(opbeat_tween, handler, registry)
 
