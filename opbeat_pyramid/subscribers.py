@@ -146,8 +146,7 @@ def handle_exception(request, exc_info):
         'user_agent': request.user_agent,
     })
 
-    print('Captured: {}'.format(str(exc_info)))
-    # return capture_exception(request, exc_info, details)
+    return capture_exception(request, exc_info, details)
 
 
 def get_exception_for_request(request):
@@ -163,7 +162,7 @@ def opbeat_tween(handler, registry, request):
     try:
         response = handler(request)
     except Exception as exc:
-        handle_exception(request, exc)
+        handle_exception(request, sys.exc_info())
         raise
 
     exc_info = get_exception_for_request(request)
@@ -183,8 +182,8 @@ def opbeat_tween_factory(handler, registry):
 
 
 def is_http_exception(exc_info):
-    if not exc_info and not exc_info[1]:
-        return False
+    if exc_info and exc_info[1]:
+        exc_info = exc_info[1]
 
     return isinstance(exc_info, httpexceptions.HTTPException)
 
