@@ -12,14 +12,25 @@ from pyramid import httpexceptions
 from opbeat_pyramid import tweens
 
 
+NO_DEFAULT_PROVIDED = {}
 DEFAULT_UNKNOWN_ROUTE_TEXT = 'Unknown Route'
 TRUTHY_VALUES = {True, 'true', 'yes', 'on'}
 
-IGNORE_HTTP_EXCEPTIONS_SETTING = 'opbeat.ignore_http_exceptions'
 DEFAULT_UNSAFE_SETTINGS_TERMS = 'token,password,passphrase,secret,private,key'
+OPBEAT_SETTING_PREFIX = 'opbeat.'
 
 
 control.instrument()
+
+
+def get_opbeat_setting(request, name, default=NO_DEFAULT_PROVIDED):
+    setting_name = OPBEAT_SETTING_PREFIX + name
+    result = request.registry.settings.get(setting_name, default)
+
+    if result is NO_DEFAULT_PROVIDED:
+        raise ValueError('Setting ' + setting_name + ' is required.')
+
+    return result
 
 
 def get_opbeat_client_cache(request):
@@ -30,8 +41,8 @@ def get_opbeat_client_cache(request):
 
 
 def create_opbeat_client(request, app_id):
-    secret_token = request.registry.settings['opbeat.secret_token']
-    organization_id = request.registry.settings['opbeat.organization_id']
+    secret_token = get_opbeat_setting(request, 'secret_token')
+    organization_id = get_opbeat_setting(request, 'organization_id')
 
     return opbeat.Client(
         secret_token=secret_token,
@@ -43,8 +54,7 @@ def create_opbeat_client(request, app_id):
 def opbeat_client_factory(request):
     clients = get_opbeat_client_cache(request)
 
-    # TODO: Handle case where this is unset / empty
-    app_id = request.registry.settings['opbeat.app_id']
+    app_id = get_opbeat_setting(request, 'app_id')
     client = clients.get(app_id)
 
     if client:
@@ -68,14 +78,15 @@ def is_opbeat_enabled(request):
     'opbeat.enabled'
 
 def get_request_module_name(request):
-    return request.registry.settings.get(
-        'opbeat.module_name',
-        'UNKNOWN_MODULE',
+    return get_opbeat_setting(request, 'module_name', default='UNKNOWN_MODULE')
+
+
+def get_unsafe_settings_terms(request):
+    private_terms = get_opbeat_setting(
+        request,
+        'unsafe_setting_terms',
+        default=None,
     )
-
-
-def get_unsafe_settings_terms(settings):
-    private_terms = settings.get('opbeat.unsafe_setting_terms', None)
 
     if private_terms is None:
         return DEFAULT_UNSAFE_SETTINGS_TERMS
@@ -83,16 +94,16 @@ def get_unsafe_settings_terms(settings):
     return set(private_terms.split(','))
 
 
-def get_safe_settings(settings):
-    unsafe_terms = get_unsafe_settings_terms(settings)
+def get_safe_settings(request):
+    unsafe_terms = get_unsafe_settings_terms(request)
     result = {}
 
-    for key in settings.keys():
+    for key in request.registry.settings.keys():
         for term in unsafe_terms:
             if term in key:
                 continue
 
-        result[key] = settings[key]
+        result[key] = request.registry.settings[key]
 
     return result
 
@@ -101,7 +112,7 @@ def should_ignore_exception(request, exc):
     if is_http_exception(exc):
         return False
 
-    return request.registry.settings.get(IGNORE_HTTP_EXCEPTIONS_SETTING, False)
+    return get_opbeat_setting(request, 'ignore_http_exceptions', default=False)
 
 
 def capture_exception(request, exc_info, extra):
@@ -137,7 +148,7 @@ def handle_exception(request, exc_info):
     if should_ignore_exception(request, exc_info):
         return
 
-    details = get_safe_settings(request.registry.settings)
+    details = get_safe_settings(request)
 
     details.update({
         'client_ip_address': request.client_addr,
@@ -206,8 +217,9 @@ def get_route_name(request):
         module_name = get_request_module_name(request)
         return module_name + '.' + request.matched_route.name
 
-    return request.registry.settings.get(
-        'opbeat.unknown_route_name',
+    return get_opbeat_setting(
+        request,
+        'unknown_route_name',
         DEFAULT_UNKNOWN_ROUTE_TEXT,
     )
 
