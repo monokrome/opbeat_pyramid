@@ -1,3 +1,4 @@
+import logging
 import functools
 import opbeat
 import sys
@@ -21,6 +22,9 @@ OPBEAT_SETTING_PREFIX = 'opbeat.'
 
 
 control.instrument()
+
+
+logger = logging.getLogger(__name__)
 
 
 def get_opbeat_setting(request, name, default=NO_DEFAULT_PROVIDED):
@@ -157,6 +161,7 @@ def handle_exception(request, exc_info):
         'user_agent': request.user_agent,
     })
 
+    logger.error('An error occured. Sending to opbeat.', exc_info=exc_info)
     return capture_exception(request, exc_info, details)
 
 
