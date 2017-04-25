@@ -19,7 +19,7 @@ class tween_config(object):
             context.config.with_package(info.module).add_tween(
                 factory_string,
                 *self.args,
-                **self.kwargs,
+                **self.kwargs
             )
 
         info = self.venusian.attach(
