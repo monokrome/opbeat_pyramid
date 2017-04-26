@@ -1,3 +1,5 @@
+import functools
+
 import venusian
 
 
@@ -9,23 +11,28 @@ class tween_config(object):
     def __init__(self, *args, **kwargs):
         self.args = args
         self.kwargs = kwargs
+        self.info = None
 
-    def __call__(self, wrapped_tween_factory):
-        def do_the_thing(context, name, obj):
-            module_name = wrapped_tween_factory.__module__
-            callable_name = wrapped_tween_factory.__name__
-            factory_string = module_name + '.' + callable_name
+    def configure(self, tween_factory, context, name, obj):
+        # Reset info just in case something funky happens.
+        info = self.info
+        self.info = None
 
-            context.config.with_package(info.module).add_tween(
-                factory_string,
-                *self.args,
-                **self.kwargs
-            )
+        module_name = tween_factory.__module__
+        callable_name = tween_factory.__name__
+        factory_string = module_name + '.' + callable_name
 
-        info = self.venusian.attach(
-            wrapped_tween_factory,
-            do_the_thing,
+        context.config.with_package(info.module).add_tween(
+            factory_string,
+            *self.args,
+            **self.kwargs
+        )
+
+    def __call__(self, tween_factory):
+        self.info = self.venusian.attach(
+            tween_factory,
+            functools.partial(self.configure, tween_factory),
             category='opbeat_pyramid',
         )
 
-        return wrapped_tween_factory
+        return tween_factory
