@@ -1,6 +1,7 @@
 import logging
 import functools
 import opbeat
+import os
 import sys
 
 import pyramid.tweens
@@ -29,6 +30,11 @@ logger = logging.getLogger(__name__)
 
 def get_opbeat_setting(request, name, default=NO_DEFAULT_PROVIDED):
     setting_name = OPBEAT_SETTING_PREFIX + name
+
+    environment_override = os.environ.get(setting_name.replace('.', '_').upper())
+    if environment_override:
+        return environment_override
+
     result = request.registry.settings.get(setting_name, default)
 
     if result is NO_DEFAULT_PROVIDED:
