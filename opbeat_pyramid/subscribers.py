@@ -1,50 +1,102 @@
+import logging
+import functools
+import opbeat
+import os
 import sys
 
-import opbeat
+import pyramid.tweens
 
 from opbeat.instrumentation import control
 
 from pyramid import events
 from pyramid import httpexceptions
 
+from opbeat_pyramid import tweens
 
-CLIENTS = {}
+
+NO_DEFAULT_PROVIDED = {}
+DEFAULT_UNKNOWN_ROUTE_TEXT = 'Unknown Route'
+TRUTHY_VALUES = {True, 'true', 'yes', 'on'}
+
 DEFAULT_UNSAFE_SETTINGS_TERMS = 'token,password,passphrase,secret,private,key'
+OPBEAT_SETTING_PREFIX = 'opbeat.'
 
 
 control.instrument()
 
 
-def opbeat_client_factory(request):
-    app_id = request.registry.settings['opbeat.app_id']
-
-    if app_id not in CLIENTS:
-        secret_token = request.registry.settings['opbeat.secret_token']
-        organization_id = request.registry.settings['opbeat.organization_id']
-
-        CLIENTS[app_id] = opbeat.Client(
-            secret_token=secret_token,
-            organization_id=organization_id,
-            app_id=app_id,
-        )
-
-    return CLIENTS[app_id]
+logger = logging.getLogger(__name__)
 
 
-def is_opbeat_enabled(request):
-    setting = request.registry.settings.get('opbeat.enabled', False)
-    return setting is True or setting == 'true'
+def get_opbeat_setting(request, name, default=NO_DEFAULT_PROVIDED):
+    setting_name = OPBEAT_SETTING_PREFIX + name
+
+    environment_override = os.environ.get(setting_name.replace('.', '_').upper())
+    if environment_override:
+        return environment_override
+
+    result = request.registry.settings.get(setting_name, default)
+
+    if result is NO_DEFAULT_PROVIDED:
+        raise ValueError('Setting ' + setting_name + ' is required.')
+
+    return result
 
 
-def get_request_module_name(request):
-    return request.registry.settings.get(
-        'opbeat.module_name',
-        'UNKNOWN_MODULE',
+def get_opbeat_client_cache(request):
+    if not hasattr(request.registry, '_opbeat_clients'):
+        request.registry._opbeat_clients = {}
+
+    return request.registry._opbeat_clients
+
+
+def create_opbeat_client(request, app_id):
+    secret_token = get_opbeat_setting(request, 'secret_token')
+    organization_id = get_opbeat_setting(request, 'organization_id')
+
+    return opbeat.Client(
+        secret_token=secret_token,
+        organization_id=organization_id,
+        app_id=app_id,
     )
 
 
-def get_unsafe_settings_terms(settings):
-    private_terms = settings.get('opbeat.unsafe_setting_terms', None)
+def opbeat_client_factory(request):
+    clients = get_opbeat_client_cache(request)
+
+    app_id = get_opbeat_setting(request, 'app_id')
+    client = clients.get(app_id)
+
+    if client:
+        return client
+
+    clients[app_id] = create_opbeat_client(request, app_id)
+
+    return clients[app_id]
+
+
+def setting_is_enabled(request, setting_name):
+    setting = request.registry.settings.get(setting_name, False)
+
+    if setting is True:
+        return True
+
+    return setting.lower() in TRUTHY_VALUES
+
+
+def is_opbeat_enabled(request):
+    'opbeat.enabled'
+
+def get_request_module_name(request):
+    return get_opbeat_setting(request, 'module_name', default='UNKNOWN_MODULE')
+
+
+def get_unsafe_settings_terms(request):
+    private_terms = get_opbeat_setting(
+        request,
+        'unsafe_setting_terms',
+        default=None,
+    )
 
     if private_terms is None:
         return DEFAULT_UNSAFE_SETTINGS_TERMS
@@ -52,98 +104,143 @@ def get_unsafe_settings_terms(settings):
     return set(private_terms.split(','))
 
 
-def get_safe_settings(settings):
-    unsafe_terms = get_unsafe_settings_terms(settings)
+def get_safe_settings(request):
+    unsafe_terms = get_unsafe_settings_terms(request)
     result = {}
 
-    for key in settings.keys():
+    for key in request.registry.settings.keys():
         for term in unsafe_terms:
             if term in key:
                 continue
 
-        result[key] = settings[key]
+        result[key] = request.registry.settings[key]
 
     return result
 
 
-def handle_exception(request, exc_info=None):
-    # Save the traceback as it may get lost when we get the message.
-    # handle_exception is not in the traceback, so calling sys.exc_info
-    # does NOT create a circular reference
-    if exc_info is None:
-        exc_info = sys.exc_info()
+def should_ignore_exception(request, exc):
+    if is_http_exception(exc):
+        return False
 
-    if exc_info[1] and isinstance(exc_info[1], httpexceptions.HTTPException):
-        # Ignore any exceptions like 404 and 302s
-        return
+    return get_opbeat_setting(request, 'ignore_http_exceptions', default=False)
+
+
+def capture_exception(request, exc_info, extra):
+    client = opbeat_client_factory(request)
+
+    data = {
+        'http': {
+            'url': get_full_request_url(request),
+            'method': request.method,
+            'query_string': request.query_string,
+        }
+    }
 
     try:
-        details = get_safe_settings(request.registry.settings)
+        return client.capture_exception(exc_info, data=data, extra=extra)
 
-        details.update({
-            'url': request.url,
-            'user_agent': request.user_agent,
-            'client_ip_address': request.client_addr,
-        })
-
-        scheme = request.scheme + '://'
-        host = request.host + ':' + request.host_port
-        path = request.path
-
-        data = {
-            'http': {
-                'url': scheme + host + path,
-                'method': request.method,
-                'query_string': request.query_string,
-            }
-        }
-
-        client = opbeat_client_factory(request)
-        client.capture_exception(exc_info, data=data, extra=details)
-    except:
-        # Exceptions in exception logging should be ignored
+    except Exception as e:
+        # NOTE: This should not be allowed until we know which exception we are
+        # looking for here.
         pass
 
-    return
 
+def get_full_request_url(request):
+    """ Get the full URL for a given request. """
+
+    scheme = request.scheme + '://'
+    host = request.host + ':' + request.host_port
+    path = request.path
+    return scheme + host + path
+
+
+def handle_exception(request, exc_info):
+    if should_ignore_exception(request, exc_info):
+        return
+
+    details = get_safe_settings(request)
+
+    details.update({
+        'client_ip_address': request.client_addr,
+        'logging_successful': 'true',
+        'url': request.url,
+        'user_agent': request.user_agent,
+    })
+
+    logger.error('An error occured. Sending to opbeat.', exc_info=exc_info)
+    return capture_exception(request, exc_info, details)
+
+
+def get_exception_for_request(request):
+    exc_info = getattr(request, 'exc_info', None)
+
+    if exc_info is not None:
+        return exc_info
+
+    return sys.exc_info()
+
+
+def opbeat_tween(handler, registry, request):
+    try:
+        response = handler(request)
+    except Exception as exc:
+        handle_exception(request, sys.exc_info())
+        raise
+
+    exc_info = get_exception_for_request(request)
+
+    if exc_info is not None:
+        handle_exception(request, exc_info)
+
+    return response
+
+
+@tweens.tween_config(over=[
+    pyramid.tweens.EXCVIEW,
+    'pyramid_tm.tm_tween_factory',
+])
 def opbeat_tween_factory(handler, registry):
-    def opbeat_tween(request):
-        try:
-            response = handler(request)
-            exc_info = getattr(request, 'exc_info', None)
-            if exc_info is not None:
-                handle_exception(request, exc_info)
-            return response
+    return functools.partial(opbeat_tween, handler, registry)
 
-        except:
-            handle_exception(request)
-            raise
-    return opbeat_tween
+
+def is_http_exception(exc_info):
+    if exc_info and exc_info[1]:
+        exc_info = exc_info[1]
+
+    return isinstance(exc_info, httpexceptions.HTTPException)
+
+
+def get_status_code(request):
+    # Handles an edge-case where `request.response` isn't the actual response.
+    # This can occur whenever a view needs to create a new response instead of
+    # using the one attached to the request.
+    if is_http_exception(request.exc_info):
+        return request.exc_info[1].code
+
+    return request.response.status_code
+
+
+def get_route_name(request):
+    if request.view_name:
+        return request.view_name
+
+    elif request.matched_route and request.matched_route.name:
+        module_name = get_request_module_name(request)
+        return module_name + '.' + request.matched_route.name
+
+    return get_opbeat_setting(
+        request,
+        'unknown_route_name',
+        DEFAULT_UNKNOWN_ROUTE_TEXT,
+    )
+
 
 def on_request_finished(request):
     if not is_opbeat_enabled(request):
         return
 
     client = opbeat_client_factory(request)
-    module_name = get_request_module_name(request)
-
-    if request.matched_route and request.matched_route.name:
-        route_name = module_name + '.' + request.matched_route.name
-    elif request.view_name:
-        route_name = request.view_name
-    else:
-        route_name = 'Unknown Route'
-
-    status_code = None
-
-    if request.exc_info:
-        if request.exc_info[1] and \
-           isinstance(request.exc_info[1], httpexceptions.HTTPException):
-            status_code = request.exc_info[1].code
-    else:
-        status_code = request.response.status_code
-
-    client.end_transaction(route_name, status_code)
+    client.end_transaction(get_route_name(request), get_status_code(request))
 
 
 @events.subscriber(events.NewRequest)
