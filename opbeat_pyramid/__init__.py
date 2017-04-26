@@ -1,4 +1,4 @@
-__VERSION__ = '1.0.8'
+__VERSION__ = '1.0.9'
 
 
 def _should_ignore_module(module_name):
