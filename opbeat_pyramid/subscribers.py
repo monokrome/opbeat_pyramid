@@ -4,12 +4,14 @@ import opbeat
 import os
 import sys
 
+
 import pyramid.tweens
 
 from opbeat.instrumentation import control
 
 from pyramid import events
 from pyramid import httpexceptions
+from pyramid.settings import asbool
 
 from opbeat_pyramid import tweens
 
@@ -87,6 +89,7 @@ def setting_is_enabled(request, setting_name):
 def is_opbeat_enabled(request):
     'opbeat.enabled'
 
+
 def get_request_module_name(request):
     return get_opbeat_setting(request, 'module_name', default='UNKNOWN_MODULE')
 
@@ -119,10 +122,10 @@ def get_safe_settings(request):
 
 
 def should_ignore_exception(request, exc):
-    if is_http_exception(exc):
-        return False
-
-    return get_opbeat_setting(request, 'ignore_http_exceptions', default=False)
+    ignore_setting = asbool(get_opbeat_setting(request, 'ignore_http_exceptions', default=False))
+    if ignore_setting and is_http_exception(exc):
+        return True
+    return False
 
 
 def capture_exception(request, exc_info, extra):
