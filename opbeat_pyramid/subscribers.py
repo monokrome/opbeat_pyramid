@@ -120,9 +120,7 @@ def get_safe_settings(request):
 
 
 def should_ignore_exception(request, exc):
-    ignore_setting = bool(get_opbeat_setting(request,
-                                             'ignore_http_exceptions',
-                                             default=False))
+    ignore_setting = bool(get_opbeat_setting(request, 'ignore_http_exceptions', default=False))
     if ignore_setting and is_http_exception(exc):
         return True
     return False
