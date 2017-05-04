@@ -1,0 +1,13 @@
+dependencies:
+  pre:
+    - pip install pytest
+    - pip install flake8
+    - pip install flake8-print
+
+test:
+  override:
+    - flake8 opbeat_pyramid
+    - py.test --cov-report html:coverage.html --cov-report xml:coverage.xml --cov-report term-missing --cov opbeat_pyramid
+
+  post:
+    - coveralls

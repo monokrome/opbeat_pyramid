@@ -18,10 +18,7 @@ MODULE_NAME = opbeat_pyramid.__name__
 REQUIRES = [
     'pyramid',
     'setuptools>=18',
-]
-
-
-TEST_REQUIRES = REQUIRES + [
+    'mock',
     'coveralls',
     'flake8',
     'flake8-print',
@@ -44,7 +41,6 @@ setup(
     include_package_data=True,
     zip_safe=False,
     install_requires=REQUIRES,
-    tests_require=REQUIRES,
     test_suite=MODULE_NAME,
     license='MIT',
     classifiers=[

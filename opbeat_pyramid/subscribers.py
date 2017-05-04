@@ -11,20 +11,24 @@ from opbeat.instrumentation import control
 
 from pyramid import events
 from pyramid import httpexceptions
-from pyramid.settings import asbool
+from pyramid import settings
 
 from opbeat_pyramid import tweens
 
 
-NO_DEFAULT_PROVIDED = {}
+control.instrument()
+
+
 DEFAULT_UNKNOWN_ROUTE_TEXT = 'Unknown Route'
+NO_DEFAULT_PROVIDED = {}
+OPBEAT_SETTING_PREFIX = 'opbeat.'
 TRUTHY_VALUES = {True, 'true', 'yes', 'on'}
 
-DEFAULT_UNSAFE_SETTINGS_TERMS = 'token,password,passphrase,secret,private,key'
-OPBEAT_SETTING_PREFIX = 'opbeat.'
 
-
-control.instrument()
+DEFAULT_UNSAFE_SETTINGS_PHRASES = (
+    'token,password,passphrase,'
+    'secret,private,key'
+)
 
 
 logger = logging.getLogger(__name__)
@@ -33,7 +37,9 @@ logger = logging.getLogger(__name__)
 def get_opbeat_setting(request, name, default=NO_DEFAULT_PROVIDED):
     setting_name = OPBEAT_SETTING_PREFIX + name
 
-    environment_override = os.environ.get(setting_name.replace('.', '_').upper())
+    env_setting_name = setting_name.replace('.', '_').upper()
+    environment_override = os.environ.get(env_setting_name)
+
     if environment_override:
         return environment_override
 
@@ -78,54 +84,58 @@ def opbeat_client_factory(request):
 
 
 def setting_is_enabled(request, setting_name):
-    setting = request.registry.settings.get(setting_name, False)
-
-    if setting is True:
-        return True
-
-    return setting.lower() in TRUTHY_VALUES
+    return settings.asbool(get_opbeat_setting(request, setting_name, False))
 
 
 def is_opbeat_enabled(request):
-    'opbeat.enabled'
+    return settings.asbool(get_opbeat_setting(
+        request,
+        'enabled',
+        default=False,
+    ))
 
 
 def get_request_module_name(request):
     return get_opbeat_setting(request, 'module_name', default='UNKNOWN_MODULE')
 
 
-def get_unsafe_settings_terms(request):
-    private_terms = get_opbeat_setting(
+def get_unsafe_settings_phrases(request):
+    unsafe_phrases = get_opbeat_setting(
         request,
-        'unsafe_setting_terms',
-        default=None,
+        'unsafe_setting_phrases',
+        default=DEFAULT_UNSAFE_SETTINGS_PHRASES,
     )
 
-    if private_terms is None:
-        return DEFAULT_UNSAFE_SETTINGS_TERMS
+    return set(unsafe_phrases.split(','))
 
-    return set(private_terms.split(','))
+
+def is_unsafe_phrase(phrase, unsafe_phrases):
+    for key in unsafe_phrases:
+        if key.lower() in phrase.lower():
+            return True
+
+    return False
 
 
 def get_safe_settings(request):
-    unsafe_terms = get_unsafe_settings_terms(request)
     result = {}
 
     for key in request.registry.settings.keys():
-        for term in unsafe_terms:
-            if term in key:
-                continue
-
-        result[key] = request.registry.settings[key]
+        if not is_unsafe_phrase(key, get_unsafe_settings_phrases(request)):
+            result[key] = request.registry.settings[key]
 
     return result
 
 
 def should_ignore_exception(request, exc):
-    ignore_setting = asbool(get_opbeat_setting(request, 'ignore_http_exceptions', default=False))
-    if ignore_setting and is_http_exception(exc):
-        return True
-    return False
+    if not is_http_exception(exc):
+        return False
+
+    return settings.asbool(get_opbeat_setting(
+        request,
+        'ignore_http_exceptions',
+        default=False,
+    ))
 
 
 def capture_exception(request, exc_info, extra):
@@ -142,7 +152,7 @@ def capture_exception(request, exc_info, extra):
     try:
         return client.capture_exception(exc_info, data=data, extra=extra)
 
-    except Exception as e:
+    except Exception:
         # NOTE: This should not be allowed until we know which exception we are
         # looking for here.
         pass
@@ -151,10 +161,7 @@ def capture_exception(request, exc_info, extra):
 def get_full_request_url(request):
     """ Get the full URL for a given request. """
 
-    scheme = request.scheme + '://'
-    host = request.host + ':' + request.host_port
-    path = request.path
-    return scheme + host + path
+    return request.scheme + '://' + request.host + request.path
 
 
 def handle_exception(request, exc_info):
@@ -186,12 +193,11 @@ def get_exception_for_request(request):
 def opbeat_tween(handler, registry, request):
     try:
         response = handler(request)
-    except Exception as exc:
+    except Exception:
         handle_exception(request, sys.exc_info())
         raise
 
     exc_info = get_exception_for_request(request)
-
     if exc_info is not None:
         handle_exception(request, exc_info)
 
@@ -238,14 +244,6 @@ def get_route_name(request):
     )
 
 
-def on_request_finished(request):
-    if not is_opbeat_enabled(request):
-        return
-
-    client = opbeat_client_factory(request)
-    client.end_transaction(get_route_name(request), get_status_code(request))
-
-
 @events.subscriber(events.NewRequest)
 def on_request_begin(event):
     request = event.request
@@ -253,6 +251,16 @@ def on_request_begin(event):
     if not is_opbeat_enabled(request):
         return
 
-    client = opbeat_client_factory(request)
+    client = request._opbeat_client = opbeat_client_factory(request)
     client.begin_transaction(get_request_module_name(request))
     request.add_finished_callback(on_request_finished)
+
+
+def on_request_finished(request):
+    if not getattr(request, '_opbeat_client', None):
+        return
+
+    route_name = get_route_name(request)
+    status_code = get_status_code(request)
+
+    request._opbeat_client.end_transaction(route_name, status_code)
