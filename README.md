@@ -34,7 +34,7 @@ The following options **must be** in your app configuration in order to use
 this module:
 
 | Pyramid Setting                  | Environment Variable           | Description                                                                        |
-|:--------------------------------:|:------------------------------:|:----------------------------------------------------------------------------------:|
+|----------------------------------|--------------------------------|------------------------------------------------------------------------------------|
 | opbeat.enabled                 * | OPBEAT_ENABLED                 | True to enable reporting to OpBeat                                                 |
 | opbeat.module_name             * | OPBEAT_MODULE_NAME             | The name of your project's module                                                  |
 | opbeat.organization_id         * | OPBEAT_ORGANIZATION_ID         | Your opbeat organization ID                                                        |
