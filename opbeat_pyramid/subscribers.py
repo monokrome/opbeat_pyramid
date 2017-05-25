@@ -128,6 +128,9 @@ def get_safe_settings(request):
 
 
 def should_ignore_exception(request, exc):
+    if exc == (None, None, None):
+        return True
+
     if not is_http_exception(exc):
         return False
 

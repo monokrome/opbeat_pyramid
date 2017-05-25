@@ -233,6 +233,14 @@ class OpbeatSubscribersTestCase(unittest.TestCase):
             mock_exc_info,
         ))
 
+    def test_should_ignore_empty_exceptions(self):
+        mock_exc_info = (None, None, None)
+
+        self.assertTrue(subscribers.should_ignore_exception(
+            self.request,
+            mock_exc_info,
+        ))
+
     @mock.patch('opbeat.Client')
     def test_capture_exception_ignores_errors_from_opbeat_client(self, Client):
         # NOTE: This uses a catchall which seems bad, but we do it right now.
