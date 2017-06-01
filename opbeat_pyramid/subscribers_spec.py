@@ -233,14 +233,6 @@ class OpbeatSubscribersTestCase(unittest.TestCase):
             mock_exc_info,
         ))
 
-    def test_should_ignore_empty_exceptions(self):
-        mock_exc_info = (None, None, None)
-
-        self.assertTrue(subscribers.should_ignore_exception(
-            self.request,
-            mock_exc_info,
-        ))
-
     @mock.patch('opbeat.Client')
     def test_capture_exception_ignores_errors_from_opbeat_client(self, Client):
         # NOTE: This uses a catchall which seems bad, but we do it right now.
@@ -308,10 +300,22 @@ class OpbeatSubscribersTestCase(unittest.TestCase):
 
     @mock.patch('sys.exc_info')
     def test_get_exception_for_request_uses_sys_as_fallback(self, _exc_info):
+        e = ValueError()
+        mock_exc_info = (type(e), e)
+
         self.request.exc_info = None
-        _exc_info.return_value = {}
+        _exc_info.return_value = mock_exc_info
         exc_info = subscribers.get_exception_for_request(self.request)
-        self.assertIs(exc_info, _exc_info.return_value)
+        self.assertEquals(exc_info, mock_exc_info)
+        _exc_info.assert_called_once()
+
+    @mock.patch('sys.exc_info')
+    def test_get_exception_for_request_no_exception(self, _exc_info):
+        self.request.exc_info = None
+        _exc_info.return_value = (None, None, None)
+        exc_info = subscribers.get_exception_for_request(self.request)
+        self.assertIs(exc_info, None)
+        _exc_info.assert_called_once()
 
     def test_opbeat_tween_gets_response_if_no_error_occured(self):
         mock_response = {}
@@ -344,6 +348,19 @@ class OpbeatSubscribersTestCase(unittest.TestCase):
         )
 
         self.assertRaises(ValueError, break_shit)
+        handle_exc.assert_called_once_with(self.request, exc_info)
+
+    @mock.patch('sys.exc_info')
+    @mock.patch('opbeat_pyramid.subscribers.handle_exception')
+    def test_opbeat_tween_raises_sys_exceptions(self, handle_exc, mock):
+        e = ValueError()
+        exc_info = mock.return_value = [type(e), e]
+
+        handler = mock.MagicMock()
+        handler.return_value = ''
+
+        subscribers.opbeat_tween(handler, self.request.registry, self.request)
+
         handle_exc.assert_called_once_with(self.request, exc_info)
 
     def test_get_status_code_returns_status_code_from_response(self):
