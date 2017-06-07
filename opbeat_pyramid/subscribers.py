@@ -187,7 +187,11 @@ def get_exception_for_request(request):
     if exc_info is not None:
         return exc_info
 
-    return sys.exc_info()
+    sys_exc = sys.exc_info()
+    if sys_exc[0] is None:
+        return None
+
+    return sys_exc
 
 
 def opbeat_tween(handler, registry, request):
