@@ -237,7 +237,7 @@ def get_route_name(request):
     if getattr(request, 'view_name', ''):
         return request.view_name
 
-    elif request.matched_route and request.matched_route.name:
+    elif getattr(request, 'matched_route', '') and request.matched_route.name:
         module_name = get_request_module_name(request)
         return module_name + '.' + request.matched_route.name
 
